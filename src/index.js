@@ -1,6 +1,7 @@
 const TZ = "Europe/Bratislava";
 const MODEL = "gemini-3.8-flash";
 
+
 export default {
   // Sprava z Telegramu (webhook)
   async fetch(req, env, ctx) {
