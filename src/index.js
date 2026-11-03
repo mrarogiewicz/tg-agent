@@ -1,18 +1,39 @@
 const TZ = "Europe/Bratislava";
 const MODEL = "gemini-3.8-flash";
 
-
 export default {
-  // Sprava z Telegramu (webhook)
+  // Správa z Telegramu (webhook)
   async fetch(req, env, ctx) {
-    if (req.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.SECRET)
+    console.log("=== NOVÝ REQUEST Z TELEGRAMU ===");
+    
+    const secretHeader = req.headers.get("X-Telegram-Bot-Api-Secret-Token");
+    console.log("Prijatý Secret Header:", secretHeader ? "nastavený" : "chybí");
+
+    if (secretHeader !== env.SECRET) {
+      console.error("CHYBA: Nesedí X-Telegram-Bot-Api-Secret-Token!");
       return new Response("no", { status: 403 });
-    const m = (await req.json()).message;
-    if (!m?.text || String(m.from.id) !== env.OWNER_ID) return new Response("ok");
+    }
+
+    const data = await req.json();
+    console.log("Celý JSON payload z Telegramu:", JSON.stringify(data));
+
+    const m = data.message;
+    if (!m?.text) {
+      console.log("Správa neobsahuje text, končím.");
+      return new Response("ok");
+    }
+
+    console.log(`ID odosielateľa: ${m.from.id}, Očakávaný OWNER_ID: ${env.OWNER_ID}`);
+    if (String(m.from.id) !== env.OWNER_ID) {
+      console.log("CHYBA: Správa nie je od vlastníka (nesedí OWNER_ID)!");
+      return new Response("ok");
+    }
+
     ctx.waitUntil(handle(m.text, env));
     return new Response("ok");
   },
-  // Spusta sa kazdu minutu (cron)
+
+  // Spúšťa sa každú minútu (cron)
   async scheduled(_e, env, ctx) {
     ctx.waitUntil(runDue(env));
   },
@@ -24,65 +45,102 @@ async function gemini(env, prompt, { json = false, search = false } = {}) {
     generationConfig: json ? { responseMimeType: "application/json" } : {},
   };
   if (search) body.tools = [{ google_search: {} }];
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${env.GEMINI_KEY}`,
-    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }
-  );
-  const j = await r.json();
-  if (!r.ok) return `Chyba Gemini (${r.status}): ${j.error?.message ?? "neznama"}`;
-  return j.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "Prazdna odpoved Gemini.";
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${env.GEMINI_KEY}`;
+  console.log("Volám Gemini API na URL:", url);
+
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const responseText = await r.text();
+    console.log("Gemini HTTP status:", r.status);
+    console.log("Gemini surová odpoveď:", responseText);
+
+    if (!r.ok) {
+      console.error(`Gemini API vrátilo chybu ${r.status}:`, responseText);
+      return `Chyba Gemini (${r.status}): ${responseText}`;
+    }
+
+    const j = JSON.parse(responseText);
+    const textOut = j.candidates?.[0]?.content?.parts?.map((p) => p.text).join("");
+    console.log("Úspešne vygenerovaný text od Gemini:", textOut);
+    return textOut || "Prazdna odpoved Gemini.";
+  } catch (err) {
+    console.error("Výnimka vo funkcii gemini():", err.message);
+    return `Chyba v gemini(): ${err.message}`;
+  }
 }
 
 async function send(env, text) {
-  await fetch(`https://api.telegram.org/bot${env.TG_TOKEN}/sendMessage`, {
+  console.log("Odosielam správu do Telegramu, dĺžka textu:", text.length);
+  const r = await fetch(`https://api.telegram.org/bot${env.TG_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ chat_id: env.OWNER_ID, text: text.slice(0, 4000) }),
   });
+  const resText = await r.text();
+  console.log("Telegram send HTTP status:", r.status, "Odpoveď:", resText);
 }
 
 async function handle(text, env) {
-  const tasks = JSON.parse((await env.KV.get("tasks")) || "[]");
-  let intent;
+  console.log("Spracovávam text v handle():", text);
   
-  // ZMENA TU: Zachytíme presnú chybovú hlášku z funkcie gemini()
-  const geminiResponse = await gemini(
-    env,
-    `Si osobny asistent. Sprava pouzivatela: "${text}"
-Existujuce ulohy: ${JSON.stringify(tasks)}
-Vrat JSON: {"action":"add|list|delete|chat","time":"HH:MM","days":"daily|weekdays","prompt":"co ma asistent urobit pri kazdom spusteni","id":"id ulohy na zmazanie","reply":"kratka odpoved po slovensky"}`,
-    { json: true }
-  );
-
-  // Ak gemini() vrátilo reťazec začínajúci na "Chyba Gemini", pošleme ju priamo používateľovi
-  if (geminiResponse.startsWith("Chyba Gemini")) {
-    return send(env, geminiResponse);
+  let tasks = [];
+  try {
+    tasks = JSON.parse((await env.KV.get("tasks")) || "[]");
+    console.log("Načítané úlohy z KV:", tasks.length);
+  } catch (e) {
+    console.error("Chyba pri čítaní KV storage:", e.message);
   }
 
+  const promptText = `Si osobny asistent. Sprava pouzivatela: "${text}"
+Existujuce ulohy: ${JSON.stringify(tasks)}
+Vrat JSON: {"action":"add|list|delete|chat","time":"HH:MM","days":"daily|weekdays","prompt":"co ma asistent urobit pri kazdom spusteni","id":"id ulohy na zmazanie","reply":"kratka odpoved po slovensky"}`;
+
+  const geminiResp = await gemini(env, promptText, { json: true });
+
+  if (geminiResp.startsWith("Chyba Gemini")) {
+    console.error("Gemini zlyhalo, posielam chybu do Telegramu.");
+    return send(env, geminiResp);
+  }
+
+  let intent;
   try {
-    intent = JSON.parse(geminiResponse);
+    intent = JSON.parse(geminiResp);
+    console.log("Úspešne spárovaný intent JSON:", intent);
   } catch (e) {
-    // Tu sa zobrazí detailná chyba parsovania JSON-u aj s odpoveďou, ktorú AI poslala
-    return send(env, `Chyba spracovania JSON: ${e.message}\nOdpoveď AI bola: ${geminiResponse}`);
+    console.error("Chyba parsovania JSON od Gemini:", e.message, "Odpoveď bola:", geminiResp);
+    return send(env, `Chyba parsovania JSON: ${e.message}\nOdpoveď AI bola:\n${geminiResp}`);
   }
 
   if (intent.action === "add") {
     tasks.push({ id: Date.now().toString(36), time: intent.time, days: intent.days, prompt: intent.prompt });
     await env.KV.put("tasks", JSON.stringify(tasks));
+    console.log("Úloha pridaná do KV.");
     return send(env, `Hotovo: ${intent.days} o ${intent.time} - ${intent.prompt}`);
   }
-  if (intent.action === "list")
+  if (intent.action === "list") {
+    console.log("Vypisujem zoznam úloh.");
     return send(
       env,
       tasks.length ? tasks.map((t) => `${t.id}: ${t.days} ${t.time} - ${t.prompt}`).join("\n") : "Ziadne ulohy."
     );
+  }
   if (intent.action === "delete") {
-    await env.KV.put("tasks", JSON.stringify(tasks.filter((t) => t.id !== intent.id)));
+    tasks = tasks.filter((t) => t.id !== intent.id);
+    await env.KV.put("tasks", JSON.stringify(tasks));
+    console.log("Úloha zmazaná z KV.");
     return send(env, "Zmazane.");
   }
-  return send(env, await gemini(env, text, { search: true }));
+  
+  console.log("Akcia je 'chat', volám Gemini pre všeobecnú odpoveď.");
+  const chatResponse = await gemini(env, text, { search: true });
+  return send(env, chatResponse);
 }
-
 
 async function runDue(env) {
   const tasks = JSON.parse((await env.KV.get("tasks")) || "[]");
