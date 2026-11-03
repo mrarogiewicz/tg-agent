@@ -43,18 +43,26 @@ async function send(env, text) {
 async function handle(text, env) {
   const tasks = JSON.parse((await env.KV.get("tasks")) || "[]");
   let intent;
-  try {
-    intent = JSON.parse(
-      await gemini(
-        env,
-        `Si osobny asistent. Sprava pouzivatela: "${text}"
+  
+  // ZMENA TU: Zachytíme presnú chybovú hlášku z funkcie gemini()
+  const geminiResponse = await gemini(
+    env,
+    `Si osobny asistent. Sprava pouzivatela: "${text}"
 Existujuce ulohy: ${JSON.stringify(tasks)}
 Vrat JSON: {"action":"add|list|delete|chat","time":"HH:MM","days":"daily|weekdays","prompt":"co ma asistent urobit pri kazdom spusteni","id":"id ulohy na zmazanie","reply":"kratka odpoved po slovensky"}`,
-        { json: true }
-      )
-    );
-  } catch {
-    return send(env, "Nerozumel som, skus to inak.");
+    { json: true }
+  );
+
+  // Ak gemini() vrátilo reťazec začínajúci na "Chyba Gemini", pošleme ju priamo používateľovi
+  if (geminiResponse.startsWith("Chyba Gemini")) {
+    return send(env, geminiResponse);
+  }
+
+  try {
+    intent = JSON.parse(geminiResponse);
+  } catch (e) {
+    // Tu sa zobrazí detailná chyba parsovania JSON-u aj s odpoveďou, ktorú AI poslala
+    return send(env, `Chyba spracovania JSON: ${e.message}\nOdpoveď AI bola: ${geminiResponse}`);
   }
 
   if (intent.action === "add") {
@@ -73,6 +81,7 @@ Vrat JSON: {"action":"add|list|delete|chat","time":"HH:MM","days":"daily|weekday
   }
   return send(env, await gemini(env, text, { search: true }));
 }
+
 
 async function runDue(env) {
   const tasks = JSON.parse((await env.KV.get("tasks")) || "[]");
