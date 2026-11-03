@@ -1,0 +1,12 @@
+name = "tg-agent"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# Spusti Worker kazdu minutu (kontroluje, ci je nejaka uloha splatna)
+[triggers]
+crons = ["* * * * *"]
+
+# KV = male uloziste, kde sa drzi zoznam uloh.
+# ID netreba, Cloudflare ho vytvori automaticky pri prvom nasadeni.
+[[kv_namespaces]]
+binding = "KV"
