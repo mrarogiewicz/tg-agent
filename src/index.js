@@ -150,9 +150,9 @@ async function gemini(env, prompt, opts = {}) {
       console.log(`Odpovedal model: ${model}`);
       return out;
     } catch (err) {
-      lastError = err;
       const isTimeout = err?.name === "TimeoutError" || err?.name === "AbortError";
-      if (isTimeout) err.message = `Model ${model} neodpovedal do ${ATTEMPT_TIMEOUT_MS / 1000} s (timeout)`;
+      // message vo výnimke TimeoutError je read-only, preto vytvárame novú chybu
+      lastError = isTimeout ? new Error(`Model ${model} neodpovedal do ${ATTEMPT_TIMEOUT_MS / 1000} s (timeout)`) : err;
       const retryable = err instanceof GeminiError && FALLBACK_STATUSES.includes(err.status);
       const networkFail = !(err instanceof GeminiError) && err instanceof TypeError; // fetch zlyhal
       if (retryable || networkFail || isTimeout) {
@@ -164,7 +164,9 @@ async function gemini(env, prompt, opts = {}) {
   }
 
   if (lastError && !(lastError instanceof GeminiError)) {
-    lastError.message += `\n(vyskúšaných modelov: ${tried} z ${MODELS.length}, rozpočet ${TOTAL_BUDGET_MS / 1000} s)`;
+    throw new Error(
+      `${lastError.message}\n(vyskúšaných modelov: ${tried} z ${MODELS.length}, rozpočet ${TOTAL_BUDGET_MS / 1000} s)`
+    );
   }
   throw lastError || new Error("Žiadny model sa nestihol vyskúšať.");
 }
