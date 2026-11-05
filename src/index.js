@@ -1,4 +1,4 @@
-import { MODELS, FALLBACK_STATUSES } from "./models.js";
+import { MODELS, FALLBACK_STATUSES, ATTEMPT_TIMEOUT_MS, TOTAL_BUDGET_MS } from "./models.js";
 
 const TZ = "Europe/Bratislava";
 const REQUIRED_ENV = ["SECRET", "OWNER_ID", "TG_TOKEN", "GEMINI_KEY"];
@@ -91,7 +91,7 @@ function describeError(err) {
 // ---------- Gemini ----------
 
 // Jedno volanie jedného modelu. Pri HTTP chybe vyhodí GeminiError.
-async function geminiOnce(env, model, prompt, { json = false, search = false } = {}) {
+async function geminiOnce(env, model, prompt, { json = false, search = false, timeoutMs = ATTEMPT_TIMEOUT_MS } = {}) {
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: json ? { responseMimeType: "application/json" } : {},
@@ -104,6 +104,7 @@ async function geminiOnce(env, model, prompt, { json = false, search = false } =
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_KEY },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   const responseText = await r.text();
@@ -130,24 +131,42 @@ async function geminiOnce(env, model, prompt, { json = false, search = false } =
 
 // Skúša modely v poradí z models.js. Ak zlyhajú všetky, vyhodí poslednú chybu.
 async function gemini(env, prompt, opts = {}) {
+  const deadline = Date.now() + TOTAL_BUDGET_MS;
   let lastError;
+  let tried = 0;
+
   for (const model of MODELS) {
+    const remaining = deadline - Date.now();
+    if (remaining < 1500) {
+      console.warn("Vyčerpaný časový rozpočet, ďalšie modely sa už neskúšajú.");
+      break;
+    }
+    tried++;
     try {
-      const out = await geminiOnce(env, model, prompt, opts);
+      const out = await geminiOnce(env, model, prompt, {
+        ...opts,
+        timeoutMs: Math.min(ATTEMPT_TIMEOUT_MS, remaining),
+      });
       console.log(`Odpovedal model: ${model}`);
       return out;
     } catch (err) {
       lastError = err;
+      const isTimeout = err?.name === "TimeoutError" || err?.name === "AbortError";
+      if (isTimeout) err.message = `Model ${model} neodpovedal do ${ATTEMPT_TIMEOUT_MS / 1000} s (timeout)`;
       const retryable = err instanceof GeminiError && FALLBACK_STATUSES.includes(err.status);
       const networkFail = !(err instanceof GeminiError) && err instanceof TypeError; // fetch zlyhal
-      if (retryable || networkFail) {
+      if (retryable || networkFail || isTimeout) {
         console.warn(`Model ${model} zlyhal (${err.status ?? err.message}), skúšam ďalší.`);
         continue;
       }
       throw err; // zlý kľúč, zlý request, prázdna odpoveď... ďalší model by nepomohol
     }
   }
-  throw lastError;
+
+  if (lastError && !(lastError instanceof GeminiError)) {
+    lastError.message += `\n(vyskúšaných modelov: ${tried} z ${MODELS.length}, rozpočet ${TOTAL_BUDGET_MS / 1000} s)`;
+  }
+  throw lastError || new Error("Žiadny model sa nestihol vyskúšať.");
 }
 
 // ---------- Telegram ----------
