@@ -1,5 +1,6 @@
+import { MODELS, FALLBACK_STATUSES } from "./models.js";
+
 const TZ = "Europe/Bratislava";
-const MODEL = "gemini-3.8-flash";
 const REQUIRED_ENV = ["SECRET", "OWNER_ID", "TG_TOKEN", "GEMINI_KEY"];
 
 export default {
@@ -56,8 +57,9 @@ export default {
 // ---------- Chyby ----------
 
 class GeminiError extends Error {
-  constructor(status, body) {
-    super(`Gemini ${status}`);
+  constructor(model, status, body) {
+    super(`Gemini ${status} (${model})`);
+    this.model = model;
     this.status = status;
     this.body = body;
   }
@@ -70,7 +72,7 @@ function geminiHint(status, body) {
   if (status === 400) return "Zlý request (skontroluj prompt/parametre).";
   if (status === 401) return "Chýba alebo je neplatný API kľúč.";
   if (status === 403) return "Kľúč nemá oprávnenie / API je zakázané / región nepodporovaný.";
-  if (status === 404) return `Model "${MODEL}" neexistuje alebo nie je dostupný pre tento kľúč.`;
+  if (status === 404) return "Model neexistuje alebo nie je dostupný pre tento kľúč.";
   if (status === 429) return "Vyčerpaná kvóta / rate limit Gemini.";
   if (status >= 500) return "Gemini má problém na strane Googlu (skús neskôr).";
   return "Neznáma chyba Gemini.";
@@ -78,14 +80,18 @@ function geminiHint(status, body) {
 
 function describeError(err) {
   if (err instanceof GeminiError) {
-    return `GEMINI ${err.status}\n${geminiHint(err.status, err.body)}\n\nOdpoveď API:\n${err.body}`;
+    return `GEMINI ${err.status} (model: ${err.model}, vyskúšané modely: ${MODELS.length})\n${geminiHint(
+      err.status,
+      err.body
+    )}\n\nOdpoveď API:\n${err.body}`;
   }
   return `${err?.name || "Error"}: ${err?.message || err}\n${err?.stack || ""}`;
 }
 
 // ---------- Gemini ----------
 
-async function gemini(env, prompt, { json = false, search = false } = {}) {
+// Jedno volanie jedného modelu. Pri HTTP chybe vyhodí GeminiError.
+async function geminiOnce(env, model, prompt, { json = false, search = false } = {}) {
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: json ? { responseMimeType: "application/json" } : {},
@@ -93,7 +99,7 @@ async function gemini(env, prompt, { json = false, search = false } = {}) {
   if (search) body.tools = [{ google_search: {} }];
 
   // Kľúč ide v hlavičke, aby sa nedostal do logov cez URL
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const r = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_KEY },
@@ -101,23 +107,47 @@ async function gemini(env, prompt, { json = false, search = false } = {}) {
   });
 
   const responseText = await r.text();
-  console.log("Gemini HTTP status:", r.status);
+  console.log(`Gemini [${model}] HTTP status:`, r.status);
 
   if (!r.ok) {
-    console.error("Gemini chyba:", r.status, responseText);
-    throw new GeminiError(r.status, responseText);
+    console.error(`Gemini [${model}] chyba:`, r.status, responseText);
+    throw new GeminiError(model, r.status, responseText);
   }
 
   const j = JSON.parse(responseText);
   const blockReason = j.promptFeedback?.blockReason;
-  if (blockReason) throw new Error(`Gemini zablokovalo prompt: ${blockReason}`);
+  if (blockReason) throw new Error(`Gemini [${model}] zablokovalo prompt: ${blockReason}`);
 
   const textOut = j.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("");
   if (!textOut) {
     const finish = j.candidates?.[0]?.finishReason;
-    throw new Error(`Prázdna odpoveď Gemini (finishReason: ${finish || "?"})\n${responseText.slice(0, 1500)}`);
+    throw new Error(
+      `Prázdna odpoveď Gemini [${model}] (finishReason: ${finish || "?"})\n${responseText.slice(0, 1500)}`
+    );
   }
   return textOut;
+}
+
+// Skúša modely v poradí z models.js. Ak zlyhajú všetky, vyhodí poslednú chybu.
+async function gemini(env, prompt, opts = {}) {
+  let lastError;
+  for (const model of MODELS) {
+    try {
+      const out = await geminiOnce(env, model, prompt, opts);
+      console.log(`Odpovedal model: ${model}`);
+      return out;
+    } catch (err) {
+      lastError = err;
+      const retryable = err instanceof GeminiError && FALLBACK_STATUSES.includes(err.status);
+      const networkFail = !(err instanceof GeminiError) && err instanceof TypeError; // fetch zlyhal
+      if (retryable || networkFail) {
+        console.warn(`Model ${model} zlyhal (${err.status ?? err.message}), skúšam ďalší.`);
+        continue;
+      }
+      throw err; // zlý kľúč, zlý request, prázdna odpoveď... ďalší model by nepomohol
+    }
+  }
+  throw lastError;
 }
 
 // ---------- Telegram ----------
