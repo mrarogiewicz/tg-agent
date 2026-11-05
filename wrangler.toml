@@ -1,12 +1,23 @@
 name = "tg-agent"
-main = "src/index.js"
-compatibility_date = "2026-01-01"
+main = "index.js"
+compatibility_date = "2026-11-01"
 
-# Spusti Worker kazdu minutu (kontroluje, ci je nejaka uloha splatna)
+# Premenné nastavené v dashboarde sa pri deployi nebudú mazať
+keep_vars = true
+
+# Logy vo Workers Logs (dashboard -> Worker -> Logs)
+[observability]
+enabled = true
+
+# Cron: každú minútu
 [triggers]
 crons = ["* * * * *"]
 
-# KV = male uloziste, kde sa drzi zoznam uloh.
-# ID netreba, Cloudflare ho vytvori automaticky pri prvom nasadeni.
+# KV storage pre úlohy (binding musí mať názov KV, ako v kóde: env.KV)
 [[kv_namespaces]]
 binding = "KV"
+id = "b9e80524875c44679850a463eee3626e"
+
+# TAJNÉ HODNOTY SEM NEDÁVAJ. Nastav ich ako Secrets (Settings -> Variables and Secrets -> Secret):
+#   SECRET, TG_TOKEN, GEMINI_KEY, OWNER_ID
+# alebo cez: npx wrangler secret put GEMINI_KEY
