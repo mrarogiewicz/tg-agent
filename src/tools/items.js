@@ -68,7 +68,7 @@ export const itemTools = [
     description: "Odstráni potravinu zo zoznamu 'moje potraviny'.",
     parameters: {
       type: "object",
-      properties: { name: { type: "string" } },
+      properties: { name: { type: "string", description: "Názov položky, ktorú treba odstrániť." } },
       required: ["name"],
     },
     async run(env, args) {
