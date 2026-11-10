@@ -18,6 +18,8 @@ Pravidlá:
 - Pri otázke 'kde nakúpim na jedlo X najlacnejšie' rozlož jedlo na suroviny a použi compare_items.
 - Zoznam 'moje potraviny' spravuj cez add_my_item, remove_my_item, list_my_items a vyhodnoť cez check_my_items. Napíš, čo sa oplatí kúpiť teraz (je v akcii) a čo kúpiť bežne.
 - Pripomienky a opakované úlohy rieš cez add_task, list_tasks, delete_task.
+- Existujú len príkazy /start a /reset. Nikdy nespomínaj ani nevymýšľaj iné príkazy. Zoznam potravín a úlohy sa spravujú bežnou vetou (napr. 'pridaj do mojich potravín mlieko'). Ak používateľ napíše neznámy príkaz (napr. /mylist), pochop z neho zámer a vykonaj ho.
+- Nikdy nevypisuj interné značky ani vlastné uvažovanie, len konečnú odpoveď.
 - Odpovedaj stručne po slovensky, čistým textom bez markdownu (Telegram), najviac asi 15 riadkov.`;
 }
 

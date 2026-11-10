@@ -34,6 +34,9 @@ function withTimeout(promise, ms) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// Interný formát modelu (napr. <|call|>, to=functions.) v odpovedi znamená, že model zlyhal pri volaní nástroja.
+const LEAK_RE = /<\|[a-z_]+\|>|to=functions\.|^analysis/i;
+
 // Vstup: { messages, tools } v OpenAI formáte. Výstup: { text, toolCalls, model }.
 export async function chat(env, request, deadline = newDeadline()) {
   const attempts = [];
@@ -44,21 +47,32 @@ export async function chat(env, request, deadline = newDeadline()) {
       attempts.push(`${model}: nie je nakonfigurovaný`);
       continue;
     }
-    const remaining = deadline - Date.now();
-    if (remaining < 1500) {
-      attempts.push("vyčerpaný časový rozpočet");
-      break;
-    }
-    const timeoutMs = Math.min(p.timeoutMs, remaining);
-    try {
-      const reply = await withTimeout(p.call(env, model, request, timeoutMs), timeoutMs);
-      if (!reply.text && !reply.toolCalls.length) throw new Error("prázdna odpoveď");
-      console.log(`Odpovedal model: ${model}`);
-      return { ...reply, model };
-    } catch (err) {
-      const message = String(err?.message || err).slice(0, 300);
-      console.warn(`Model ${model} zlyhal: ${message}`);
-      attempts.push(`${model}: ${message}`);
+
+    // Uniknutý formát je náhodný, preto sa ten istý model skúsi ešte raz.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const remaining = deadline - Date.now();
+      if (remaining < 1500) {
+        attempts.push("vyčerpaný časový rozpočet");
+        throw new LlmError(attempts);
+      }
+      const timeoutMs = Math.min(p.timeoutMs, remaining);
+      try {
+        const reply = await withTimeout(p.call(env, model, request, timeoutMs), timeoutMs);
+        if (!reply.text && !reply.toolCalls.length) throw new Error("prázdna odpoveď");
+        if (!reply.toolCalls.length && LEAK_RE.test(reply.text)) {
+          const leak = new Error(`uniknutý interný formát modelu: ${reply.text.slice(0, 120)}`);
+          leak.retry = true;
+          throw leak;
+        }
+        console.log(`Odpovedal model: ${model}`);
+        return { ...reply, model };
+      } catch (err) {
+        const message = String(err?.message || err).slice(0, 300);
+        console.warn(`Model ${model} zlyhal (pokus ${attempt + 1}): ${message}`);
+        if (err?.retry && attempt === 0 && deadline - Date.now() > 6000) continue;
+        attempts.push(`${model}: ${message}`);
+        break;
+      }
     }
   }
   throw new LlmError(attempts);
