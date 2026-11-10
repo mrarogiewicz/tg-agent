@@ -1,9 +1,9 @@
 import { runAgent } from "./agent.js";
 import { withDb } from "./d1rest.js";
-import { describeError } from "./gemini.js";
+import { describeError } from "./llm.js";
 import { TZ } from "./util.js";
 
-const REQUIRED_ENV = ["SECRET", "OWNER_ID", "TG_TOKEN", "GEMINI_KEY"];
+const REQUIRED_ENV = ["SECRET", "OWNER_ID", "TG_TOKEN"];
 const HISTORY_KEY = "history";
 const HISTORY_MAX_MESSAGES = 8; // posledné 4 výmeny, aby sa dalo nadviazať ("a v Lidli?")
 const HISTORY_TTL_SECONDS = 2 * 60 * 60;
@@ -13,6 +13,7 @@ export default {
   async fetch(req, rawEnv, ctx) {
     const missing = REQUIRED_ENV.filter((k) => !rawEnv[k]);
     if (!rawEnv.KV) missing.push("KV (binding)");
+    if (!rawEnv.AI && !rawEnv.GEMINI_KEY) missing.push("AI (binding) alebo GEMINI_KEY");
     const { env, missing: missingDb } = withDb(rawEnv);
     missing.push(...missingDb);
     if (missing.length) {
@@ -124,7 +125,7 @@ async function handle(text, env) {
   const history = await loadHistory(env);
   const answer = await runAgent(env, text, { history });
   await send(env, answer);
-  await saveHistory(env, [...history, { role: "user", text }, { role: "model", text: answer }]);
+  await saveHistory(env, [...history, { role: "user", text }, { role: "assistant", text: answer }]);
 }
 
 async function runDue(env) {
