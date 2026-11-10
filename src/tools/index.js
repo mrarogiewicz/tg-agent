@@ -2,9 +2,8 @@
 import { offerTools } from "./offers.js";
 import { itemTools } from "./items.js";
 import { taskTools } from "./tasks.js";
-import { webTools } from "./web.js";
 
-const TOOLS = [...offerTools, ...itemTools, ...taskTools, ...webTools];
+const TOOLS = [...offerTools, ...itemTools, ...taskTools];
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
 export function declarations() {
