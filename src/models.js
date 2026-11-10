@@ -1,12 +1,16 @@
-// Poradie modelov: skúšajú sa od prvého po posledný, kým jeden neodpovie.
-export const MODELS = [
-  "gemini-3.1-flash-lite",
+// Poradie modelov: skúšajú sa od prvého, kým jeden neodpovie. Poskytovateľ bez konfigurácie sa preskočí.
+// workers-ai = Cloudflare (binding AI, zadarmo 10 000 neurónov denne), gemini = záloha (len text a nástroje, bez web searchu).
+export const CHAIN = [
+  { provider: "workers-ai", model: "@cf/openai/gpt-oss-120b" },
+  { provider: "workers-ai", model: "@cf/qwen/qwen3-30b-a3b-fp8" },
+  { provider: "workers-ai", model: "@cf/zai-org/glm-4.7-flash" },
+  { provider: "gemini", model: "gemini-3.1-flash-lite" },
 ];
 
-// Pri týchto HTTP statusoch sa skúsi ďalší model.
-// 400/401/403 sa nepokúšajú znova (zlý request alebo kľúč, ďalší model by zlyhal rovnako).
-export const FALLBACK_STATUSES = [404, 429, 500, 502, 503, 504];
-
 // Cloudflare zruší spracovanie po odpovedi po 30 s, preto celý reťazec musí skončiť skôr.
-export const ATTEMPT_TIMEOUT_MS = 25000; // max. čas jedného modelu
+export const WORKERS_AI_TIMEOUT_MS = 15000; // max. čas jedného modelu v Cloudflare
+export const GEMINI_TIMEOUT_MS = 25000;
 export const TOTAL_BUDGET_MS = 26000; // max. čas všetkých pokusov spolu
+
+// Reasoning modely míňajú tokeny aj na uvažovanie, predvolených 256 by odpoveď orezalo.
+export const MAX_OUTPUT_TOKENS = 1500;
