@@ -18,6 +18,10 @@ crons = ["* * * * *"]
 binding = "KV"
 id = "b9e80524875c44679850a463eee3626e"
 
+# Workers AI (hlavný model, zadarmo 10 000 neurónov denne). Binding musí mať názov AI (env.AI).
+[ai]
+binding = "AI"
+
 # D1 s letákmi sa nečíta cez binding (ID databázy by bolo v repozitári), ale cez REST API.
 # Nastav Secrets: CF_ACCOUNT_ID, CF_D1_DATABASE_ID, CF_API_TOKEN (src/d1rest.js).
 
