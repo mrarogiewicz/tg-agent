@@ -41,7 +41,7 @@ export const taskTools = [
     description: "Zmaže naplánovanú úlohu podľa jej id (id zistíš cez list_tasks).",
     parameters: {
       type: "object",
-      properties: { id: { type: "string" } },
+      properties: { id: { type: "string", description: "Id úlohy z list_tasks." } },
       required: ["id"],
     },
     async run(env, args) {
